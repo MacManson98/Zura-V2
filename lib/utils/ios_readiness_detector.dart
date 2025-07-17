@@ -1,5 +1,5 @@
 // File: lib/utils/ios_readiness_detector.dart
-import 'package:Zura/utils/debug_loader.dart' show DebugLogger;
+import 'debug_loader.dart' show DebugLogger;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';

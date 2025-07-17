@@ -1,21 +1,28 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'firebase_options.dart';
-import 'utils/movie_loader.dart';
+import 'main_navigation_v2.dart';
+import 'utils/ios_readiness_detector.dart';
+import 'utils/debug_loader.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  
-  runApp(const MyApp());
+
+  await IOSReadinessDetector.waitForIOSReadiness();
+
+  DebugLogger.log("🚀 Zura V2 starting with new navigation system");
+
+  runApp(const ZuraApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class ZuraApp extends StatelessWidget {
+  const ZuraApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -25,98 +32,78 @@ class MyApp extends StatelessWidget {
       splitScreenMode: true,
       builder: (context, child) {
         return MaterialApp(
-          title: 'Zura V2',
+          title: 'Zura - Movie Matching',
           debugShowCheckedModeBanner: false,
           theme: ThemeData.dark().copyWith(
             scaffoldBackgroundColor: const Color(0xFF121212),
             primaryColor: const Color(0xFFE5A00D),
             colorScheme: const ColorScheme.dark(
               primary: Color(0xFFE5A00D),
+              secondary: Color(0xFFE5A00D),
+              surface: Color(0xFF2A2A2A),   // ✅ replaced background
+              onPrimary: Colors.black,
+              onSecondary: Colors.black,
+              onSurface: Colors.white,
+            ),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Color(0xFF121212),
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE5A00D),
+                foregroundColor: Colors.black,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            outlinedButtonTheme: OutlinedButtonThemeData(
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFFE5A00D)),
+                foregroundColor: const Color(0xFFE5A00D),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFE5A00D),
+              ),
+            ),
+            cardTheme: CardThemeData(
+              color: const Color(0xFF2A2A2A),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            dialogTheme: DialogThemeData(
+              backgroundColor: const Color(0xFF2A2A2A),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            bottomSheetTheme: const BottomSheetThemeData(
+              backgroundColor: Color(0xFF2A2A2A),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+            ),
+            snackBarTheme: SnackBarThemeData(
+              backgroundColor: const Color(0xFF2A2A2A),
+              contentTextStyle: const TextStyle(color: Colors.white),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              behavior: SnackBarBehavior.floating,
             ),
           ),
-          home: const HomePage(),
+          home: const MainNavigationV2(),
         );
       },
-    );
-  }
-}
-
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
-
-  @override
-  State<HomePage> createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> {
-  String _testResult = "Testing...";
-
-  @override
-  void initState() {
-    super.initState();
-    _testBusinessLogic();
-  }
-
-  Future<void> _testBusinessLogic() async {
-    try {
-      // Test movie loading
-      final movies = await MovieDatabaseLoader.loadMovieDatabase();
-      
-      // Test Firebase connection
-      final firebaseApp = Firebase.app();
-      
-      setState(() {
-        _testResult = "✅ SUCCESS!\n"
-            "Movies loaded: ${movies.length}\n"
-            "Firebase: ${firebaseApp.name}\n"
-            "Ready to build UI!";
-      });
-    } catch (e) {
-      setState(() {
-        _testResult = "❌ Error: $e";
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.movie,
-                size: 64,
-                color: Theme.of(context).primaryColor,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Zura V2',
-                style: Theme.of(context).textTheme.headlineLarge,
-              ),
-              const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[800],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _testResult,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
