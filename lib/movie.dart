@@ -154,6 +154,12 @@ class Movie {
   
   /// Check if movie is in English (for language preference learning)
   bool get isEnglish => originalLanguage == 'en';
+
+  /// Extract the release year from [releaseDate] if available.
+  int? get releaseYear {
+    if (releaseDate == null || releaseDate!.length < 4) return null;
+    return int.tryParse(releaseDate!.substring(0, 4));
+  }
   
   /// Get decade for potential trend analysis
   String get decade {

@@ -101,6 +101,11 @@ class UserProfile {
     _cachedLikedMovieIds.add(movie.id);
   }
 
+  /// Track a movie the user has passed on during matching.
+  void addPassedMovie(Movie movie) {
+    passedMovieIds.add(movie.id);
+  }
+
   // ✅ BULK LOADING: Load missing movies into cache
   void loadMoviesIntoCache(List<Movie> movies) {
     for (final movie in movies) {

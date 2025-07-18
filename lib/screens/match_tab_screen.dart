@@ -197,17 +197,11 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
         ...(_sessionInvites.take(3).map((invite) => Padding(
           padding: EdgeInsets.only(bottom: 8.h),
           child: InlineNotificationCard(
-            type: InlineNotificationType.success,
+            type: InlineNotificationType.sessionInvite,
             title: '${invite['hostName']} invited you to match',
-            message: 'Tap to join their session',
-            action: InlineNotificationAction(
-              label: 'Join',
-              onPressed: () => _acceptSessionInvite(invite),
-            ),
-            secondaryAction: InlineNotificationAction(
-              label: 'Decline',
-              onPressed: () => _declineSessionInvite(invite),
-            ),
+            subtitle: 'Tap to join their session',
+            onAccept: () => _acceptSessionInvite(invite),
+            onDecline: () => _declineSessionInvite(invite),
           ),
         )).toList()),
       ],
