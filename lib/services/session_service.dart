@@ -1334,4 +1334,89 @@ class SessionService {
     final minParticipants = isGroupSession ? 2 : 2; // Can adjust thresholds later
     return participantCount >= minParticipants ? SessionStatus.active : SessionStatus.created;
   }
+
+  // Add these inside your SessionService class
+
+  static Future<SwipeSession?> getSession(String sessionId) async {
+    try {
+      DebugLogger.log("🔍 Getting session: $sessionId");
+      final doc = await _sessionsCollection.doc(sessionId).get();
+      
+      if (doc.exists) {
+        final session = SwipeSession.fromJson(doc.data()!);
+        DebugLogger.log("✅ Session found: ${session.sessionId}");
+        return session;
+      } else {
+        DebugLogger.log("❌ Session not found: $sessionId");
+        return null;
+      }
+    } catch (e) {
+      DebugLogger.log("❌ Error getting session: $e");
+      return null;
+    }
+  }
+
+  static Future<SwipeSession> createCollaborativeSession({
+    required String hostName,
+    required List<String> participantIds,
+    required List<String> participantNames,
+    CurrentMood? selectedMood,
+    String? groupId,
+    String? groupName,
+  }) async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) throw Exception("User not authenticated");
+
+      DebugLogger.log("🤝 Creating collaborative session");
+      DebugLogger.log("👥 Participants: ${participantNames.join(', ')}");
+
+      String? moodId;
+      String? moodName; 
+      String? moodEmoji;
+      
+      if (selectedMood != null) {
+        moodId = selectedMood.toString().split('.').last;
+        moodName = selectedMood.displayName;
+        moodEmoji = selectedMood.emoji;
+      }
+
+      final inviteType = participantIds.length > 1 ? InvitationType.group : InvitationType.friend;
+
+      final session = SwipeSession.create(
+        hostId: currentUser.uid,
+        hostName: hostName,
+        inviteType: inviteType,
+        selectedMoodId: moodId,
+        selectedMoodName: moodName,
+        selectedMoodEmoji: moodEmoji,
+        groupName: groupName,
+      );
+
+      final allParticipantIds = [currentUser.uid, ...participantIds];
+      final allParticipantNames = [hostName, ...participantNames];
+
+      final updatedSession = session.copyWith(
+        participantIds: allParticipantIds,
+        participantNames: allParticipantNames,
+        userLikes: {for (String id in allParticipantIds) id: <String>[]},
+        userPasses: {for (String id in allParticipantIds) id: <String>[]},
+      );
+
+      final sessionData = updatedSession.toJson();
+      if (groupId != null) {
+        sessionData['groupId'] = groupId;
+        sessionData['isGroupSession'] = true;
+      }
+
+      await _sessionsCollection.doc(session.sessionId).set(sessionData);
+      
+      DebugLogger.log("✅ Collaborative session created: ${session.sessionId}");
+      return updatedSession;
+      
+    } catch (e) {
+      DebugLogger.log("❌ Error creating collaborative session: $e");
+      rethrow;
+    }
+  }
 }

@@ -1,31 +1,23 @@
-// lib/screens/matcher_screen_v2.dart
+// lib/screens/matcher_screen.dart - FIXED VERSION
 import 'dart:async';
-import 'dart:math';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../movie.dart';
 import '../models/user_profile.dart';
 import '../models/session_models.dart';
-import '../models/matching_models.dart';
-import '../utils/themed_notifications.dart';
 import '../utils/user_profile_storage.dart';
 import '../utils/debug_loader.dart';
 import '../utils/session_manager.dart';
 import '../utils/unified_session_manager.dart';
 import '../utils/movie_loader.dart';
 import '../utils/tmdb_api.dart';
-import '../utils/group_matching_handler.dart';
 import '../utils/matcher_group_intergration.dart';
 import '../utils/mood_engine_bridge.dart';
 import '../services/session_service.dart';
-import '../widgets/context_aware_cta.dart';
-import '../widgets/inline_notification_card.dart';
-import '../widgets/mood_selection_widget.dart';
 import 'match_celebration_screen.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/completed_session.dart';
 
 enum MatchingContext {
   solo,
@@ -35,7 +27,7 @@ enum MatchingContext {
   joinSession,
 }
 
-class MatcherScreenV2 extends StatefulWidget {
+class MatcherScreen extends StatefulWidget {
   final UserProfile userProfile;
   final MatchingContext context;
   final String? sessionId;
@@ -43,7 +35,7 @@ class MatcherScreenV2 extends StatefulWidget {
   final List<UserProfile>? targetGroup;
   final String? contextMessage;
   
-  const MatcherScreenV2({
+  const MatcherScreen({
     super.key,
     required this.userProfile,
     required this.context,
@@ -54,41 +46,47 @@ class MatcherScreenV2 extends StatefulWidget {
   });
 
   @override
-  State<MatcherScreenV2> createState() => _MatcherScreenV2State();
+  State<MatcherScreen> createState() => _MatcherScreenState();
 }
 
-class _MatcherScreenV2State extends State<MatcherScreenV2> 
+class _MatcherScreenState extends State<MatcherScreen> 
     with TickerProviderStateMixin, WidgetsBindingObserver {
   
-  // Core matching state
+  // ========================================
+  // CORE STATE
+  // ========================================
   List<Movie> _sessionPool = [];
   List<Movie> _movieDatabase = [];
   bool _isLoading = true;
   bool _isMatching = false;
   
-  // Session management
   SwipeSession? _currentSession;
   StreamSubscription<SwipeSession>? _sessionSubscription;
   bool _isCollaborative = false;
   
-  // Mood and context
-  List<CurrentMood> _selectedMoods = [];
-  SessionContext? _sessionContext;
+  final List<CurrentMood> _selectedMoods = [];
   
-  // UI state
-  bool _showMoodSelection = false;
   String _statusMessage = '';
   
-  // Business logic preserved
   Timer? _sessionTimer;
-  Set<String> _currentSessionMovieIds = {};
-  Set<String> _sessionPassedMovieIds = {};
   int _swipeCount = 0;
+
+  // ========================================
+  // UI ANIMATION STATE
+  // ========================================
+  late AnimationController _cardAnimationController;
+  late AnimationController _buttonAnimationController;
+  late Animation<double> _cardScaleAnimation;
+  late Animation<Offset> _cardSlideAnimation;
   
+  bool _isDragging = false;
+  double _dragPosition = 0.0;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _setupAnimations();
     _initializeScreen();
   }
 
@@ -96,10 +94,44 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
   void dispose() {
     _sessionTimer?.cancel();
     _sessionSubscription?.cancel();
+    _cardAnimationController.dispose();
+    _buttonAnimationController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
+  void _setupAnimations() {
+    _cardAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    
+    _buttonAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 150),
+      vsync: this,
+    );
+    
+    _cardScaleAnimation = Tween<double>(
+      begin: 0.95,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _cardAnimationController,
+      curve: Curves.elasticOut,
+    ));
+    
+    _cardSlideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.1),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _cardAnimationController,
+      curve: Curves.easeOut,
+    ));
+  }
+
+  // ========================================
+  // INITIALIZATION METHODS
+  // ========================================
+  
   Future<void> _initializeScreen() async {
     setState(() {
       _isLoading = true;
@@ -107,10 +139,8 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
     });
 
     try {
-      // Load movie database
       _movieDatabase = await MovieDatabaseLoader.loadMovieDatabase();
       
-      // Handle different contexts
       switch (widget.context) {
         case MatchingContext.continueSession:
           await _resumeActiveSession();
@@ -124,19 +154,22 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
         case MatchingContext.joinSession:
           await _joinExistingSession();
           break;
-        case MatchingContext.solo:
-        default:
-          await _setupSoloSession();
+        case MatchingContext.solo:           // ✅ Make sure this line exists
+          await _setupSoloSession();         // ✅ This calls _setupSoloSession
           break;
+        // No default case needed
       }
+      
+      setState(() {
+        _isLoading = false;
+      });
+      
+      _cardAnimationController.forward();
       
     } catch (e) {
       DebugLogger.log("❌ Error initializing screen: $e");
       setState(() {
         _statusMessage = 'Something went wrong. Please try again.';
-      });
-    } finally {
-      setState(() {
         _isLoading = false;
       });
     }
@@ -144,42 +177,42 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
 
   Future<void> _resumeActiveSession() async {
     final activeSession = UnifiedSessionManager.getActiveSessionForDisplay();
-    if (activeSession != null) {
-      setState(() {
-        _statusMessage = 'Resuming your ${activeSession.type.name} session...';
-      });
-      
-      // Load session data and continue
-      await _loadSessionData();
+    if (activeSession != null && activeSession.type != SessionType.solo) {
+      // ✅ FIXED: Use correct SessionType values (solo, friend, group)
+      final collaborativeSession = await SessionService.getSession(activeSession.id);
+      if (collaborativeSession != null) {
+        _currentSession = collaborativeSession;
+        _isCollaborative = true;
+        _startSessionListener();
+      }
     }
+    await _loadSessionData();
   }
 
   Future<void> _setupFriendSession() async {
     if (widget.targetFriend == null) return;
     
     setState(() {
-      _statusMessage = 'Setting up session with ${widget.targetFriend!.name}...';
+      _statusMessage = 'Creating session with ${widget.targetFriend!.name}...';
     });
     
     try {
-      // Create collaborative session
-      final session = await SessionService.createSession(
-        hostId: widget.userProfile.uid,
+      // ✅ FIXED: Use correct method signature that exists
+      final session = await SessionService.createCollaborativeSession(
         hostName: widget.userProfile.name,
-        inviteType: InvitationType.friend,
-        invitedUserIds: [widget.targetFriend!.uid],
-        invitedUserNames: [widget.targetFriend!.name],
+        participantIds: [widget.targetFriend!.uid],
+        participantNames: [widget.targetFriend!.name],
       );
       
-      if (session != null) {
-        _currentSession = session;
-        _isCollaborative = true;
-        _startSessionListener();
-        
-        setState(() {
-          _statusMessage = 'Waiting for ${widget.targetFriend!.name} to join...';
-        });
-      }
+      _currentSession = session;
+      _isCollaborative = true;
+      _startSessionListener();
+      
+      await _generateMoviesAsHost();
+      
+      setState(() {
+        _statusMessage = 'Session created! Waiting for ${widget.targetFriend!.name}...';
+      });
     } catch (e) {
       DebugLogger.log("❌ Error setting up friend session: $e");
       setState(() {
@@ -192,27 +225,25 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
     if (widget.targetGroup == null || widget.targetGroup!.isEmpty) return;
     
     setState(() {
-      _statusMessage = 'Setting up group session...';
+      _statusMessage = 'Creating group session...';
     });
     
     try {
-      final session = await SessionService.createSession(
-        hostId: widget.userProfile.uid,
+      final session = await SessionService.createCollaborativeSession(
         hostName: widget.userProfile.name,
-        inviteType: InvitationType.group,
-        invitedUserIds: widget.targetGroup!.map((u) => u.uid).toList(),
-        invitedUserNames: widget.targetGroup!.map((u) => u.name).toList(),
+        participantIds: widget.targetGroup!.map((user) => user.uid).toList(),
+        participantNames: widget.targetGroup!.map((user) => user.name).toList(),
       );
       
-      if (session != null) {
-        _currentSession = session;
-        _isCollaborative = true;
-        _startSessionListener();
-        
-        setState(() {
-          _statusMessage = 'Waiting for group members to join...';
-        });
-      }
+      _currentSession = session;
+      _isCollaborative = true;
+      _startSessionListener();
+      
+      await _generateMoviesAsHost();
+      
+      setState(() {
+        _statusMessage = 'Group session created!';
+      });
     } catch (e) {
       DebugLogger.log("❌ Error setting up group session: $e");
       setState(() {
@@ -256,6 +287,7 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
       _statusMessage = 'Ready to discover movies!';
       _isMatching = false;
     });
+    await _loadSoloSessionData();
   }
 
   void _startSessionListener() {
@@ -267,7 +299,6 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
         setState(() {
           _currentSession = updatedSession;
         });
-        
         _handleSessionUpdate(updatedSession);
       },
       onError: (error) {
@@ -326,7 +357,6 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
       _currentSession = null;
       _sessionPool.clear();
       _selectedMoods.clear();
-      _sessionContext = null;
     });
     
     _sessionSubscription?.cancel();
@@ -336,16 +366,12 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
   Future<void> _startMatching() async {
     setState(() {
       _isMatching = true;
-      _statusMessage = 'Starting your matching session...';
+      _statusMessage = '';
     });
 
     try {
       await _loadSessionData();
-      
-      setState(() {
-        _statusMessage = '';
-      });
-      
+      _cardAnimationController.forward();
     } catch (e) {
       DebugLogger.log("❌ Error starting matching: $e");
       setState(() {
@@ -356,11 +382,9 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
   }
 
   Future<void> _loadSessionData() async {
-    // For collaborative sessions, load from session data
     if (_isCollaborative && _currentSession != null) {
       await _loadCollaborativeSessionData();
     } else {
-      // For solo sessions, generate new data
       await _loadSoloSessionData();
     }
   }
@@ -369,7 +393,6 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
     if (_currentSession == null) return;
     
     try {
-      // Check if session has existing movies
       if (_currentSession!.moviePool.isNotEmpty) {
         final movies = <Movie>[];
         for (final movieId in _currentSession!.moviePool) {
@@ -385,13 +408,12 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
           _sessionPool = movies;
         });
       } else {
-        // Need to generate movies for session
         await _generateCollaborativeMovies();
       }
       
     } catch (e) {
       DebugLogger.log("❌ Error loading collaborative session data: $e");
-      throw e;
+      rethrow; // ✅ FIXED: Use rethrow instead of throw e
     }
   }
 
@@ -401,10 +423,8 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
     final isHost = _currentSession!.hostId == widget.userProfile.uid;
     
     if (isHost) {
-      // Host generates movies
       await _generateMoviesAsHost();
     } else {
-      // Friend waits for host to generate
       setState(() {
         _statusMessage = 'Waiting for host to prepare movies...';
       });
@@ -413,7 +433,6 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
 
   Future<void> _generateMoviesAsHost() async {
     try {
-      // Use popular movies as default for collaborative sessions
       final movies = await TMDBApi.getPopularMovies();
       
       if (movies.isNotEmpty) {
@@ -421,7 +440,6 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
           _sessionPool = movies;
         });
         
-        // Save to session for other participants
         await SessionService.startSession(
           _currentSession!.sessionId,
           selectedMoodIds: [],
@@ -430,13 +448,12 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
       }
     } catch (e) {
       DebugLogger.log("❌ Error generating movies as host: $e");
-      throw e;
+      rethrow; // ✅ FIXED: Use rethrow instead of throw e
     }
   }
 
   Future<void> _loadSoloSessionData() async {
     try {
-      // Load popular movies for solo sessions
       final movies = await TMDBApi.getPopularMovies();
       
       if (movies.isNotEmpty) {
@@ -446,43 +463,38 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
       }
     } catch (e) {
       DebugLogger.log("❌ Error loading solo session data: $e");
-      throw e;
+      rethrow; // ✅ FIXED: Use rethrow instead of throw e
     }
   }
 
-  // Preserved business logic for movie interactions
+  // ========================================
+  // MOVIE INTERACTION METHODS
+  // ========================================
   void _likeMovie(Movie movie) {
     _trackSwipe(movie.id, true);
     
-    // Add to user's likes
     widget.userProfile.addLikedMovie(movie);
     UserProfileStorage.saveProfile(widget.userProfile);
     
-    // Handle matching logic
     if (_isCollaborative && _currentSession != null) {
       _handleCollaborativeLike(movie);
     } else {
       _handleSoloLike(movie);
     }
     
-    // Move to next movie
     _moveToNextMovie();
   }
 
   void _passMovie(Movie movie) {
     _trackSwipe(movie.id, false);
     
-    // Add to user's passed movies
     widget.userProfile.addPassedMovie(movie);
     UserProfileStorage.saveProfile(widget.userProfile);
     
-    // Move to next movie
     _moveToNextMovie();
   }
 
   void _handleCollaborativeLike(Movie movie) {
-    // Implement collaborative matching logic
-    // This preserves your existing business logic
     if (_currentSession != null) {
       MatcherGroupIntegration.handleGroupLike(
         context: context,
@@ -496,7 +508,6 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
   }
 
   void _handleSoloLike(Movie movie) {
-    // Solo matching logic - just record the like
     SessionManager.addLikedMovie(movie.id);
   }
 
@@ -529,9 +540,11 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
       setState(() {
         _sessionPool.removeAt(0);
       });
+      
+      _cardAnimationController.reset();
+      _cardAnimationController.forward();
     }
     
-    // Load more movies if running low
     if (_sessionPool.length < 5) {
       _loadMoreMovies();
     }
@@ -551,7 +564,6 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
   void _trackSwipe(String movieId, bool isLike) {
     _swipeCount++;
     
-    // Preserve your existing tracking logic
     MoodBasedLearningEngine.recordSwipe(
       movieId: movieId,
       isLike: isLike,
@@ -560,209 +572,222 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
     DebugLogger.log("👆 Swipe $_swipeCount: ${isLike ? 'LIKE' : 'PASS'} - $movieId");
   }
 
+  // ========================================
+  // UI BUILD METHODS
+  // ========================================
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
-      appBar: _buildAppBar(),
-      body: _isLoading ? _buildLoadingState() : _buildMainContent(),
-    );
-  }
-
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      backgroundColor: const Color(0xFF1F1F1F),
-      elevation: 0,
-      title: Text(
-        _getAppBarTitle(),
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 20.sp,
-          letterSpacing: 0.5,
-        ),
+      body: SafeArea(
+        child: _isLoading ? _buildLoadingState() : _buildMainContent(),
       ),
-      actions: [
-        if (_isCollaborative)
-          Padding(
-            padding: EdgeInsets.only(right: 16.w),
-            child: Center(
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12.r),
-                  border: Border.all(
-                    color: Colors.green.withOpacity(0.5),
-                    width: 1.w,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6.w,
-                      height: 6.h,
-                      decoration: BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    SizedBox(width: 4.w),
-                    Text(
-                      "LIVE",
-                      style: TextStyle(
-                        color: Colors.green,
-                        fontSize: 10.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
     );
-  }
-
-  String _getAppBarTitle() {
-    if (_isCollaborative && _currentSession != null) {
-      final otherParticipants = _currentSession!.participantNames
-          .where((name) => name != widget.userProfile.name)
-          .toList();
-      
-      if (otherParticipants.isNotEmpty) {
-        return "Matching with ${otherParticipants.join(", ")}";
-      }
-    }
-    
-    return "Discover Movies";
   }
 
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(const Color(0xFFE5A00D)),
-          ),
-          SizedBox(height: 24.h),
-          Text(
-            _statusMessage,
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 16.sp,
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFF121212),
+            Color(0xFF1F1F1F),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 80.w,
+              height: 80.w,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFFE5A00D),
+                    const Color(0xFFE5A00D).withValues(alpha: 0.6), // ✅ FIXED: withValues
+                  ],
+                ),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.movie,
+                  size: 40.sp,
+                  color: Colors.black,
+                ),
+              ),
             ),
-            textAlign: TextAlign.center,
-          ),
-        ],
+            SizedBox(height: 32.h),
+            Text(
+              _statusMessage,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18.sp,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 16.h),
+            SizedBox(
+              width: 40.w,
+              height: 40.w,
+              child: const CircularProgressIndicator(
+                strokeWidth: 3,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  Color(0xFFE5A00D),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildMainContent() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            const Color(0xFF121212),
-            const Color(0xFF0A0A0A),
-          ],
+    return Column(
+      children: [
+        _buildHeader(),
+        Expanded(
+          child: _sessionPool.isEmpty ? _buildEmptyState() : _buildSwipeInterface(),
         ),
-      ),
-      child: Column(
-        children: [
-          // Status message
-          if (_statusMessage.isNotEmpty)
-            InlineNotificationCard(
-              type: InlineNotificationType.info,
-              title: 'Session Status',
-              message: _statusMessage,
-            ),
-          
-          // Main content area
-          Expanded(
-            child: _isMatching 
-                ? _buildMatchingInterface()
-                : _buildStartInterface(),
-          ),
-        ],
-      ),
+      ],
     );
   }
 
-  Widget _buildStartInterface() {
-    return Padding(
+  Widget _buildHeader() {
+    return Container(
       padding: EdgeInsets.all(20.w),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Context-aware quick start
-          ContextAwareCTA(
-            title: _getStartTitle(),
-            subtitle: _getStartSubtitle(),
-            icon: Icons.play_arrow,
-            onPressed: _startMatching,
-            isPrimary: true,
+          Row(
+            children: [
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 40.w,
+                  height: 40.w,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A2A2A),
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
+                  child: Icon(
+                    Icons.arrow_back_ios_new,
+                    color: Colors.white,
+                    size: 20.sp,
+                  ),
+                ),
+              ),
+              SizedBox(width: 16.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _getContextTitle(),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (_statusMessage.isNotEmpty) ...[
+                      SizedBox(height: 4.h),
+                      Text(
+                        _statusMessage,
+                        style: TextStyle(
+                          color: const Color(0xFFE5A00D),
+                          fontSize: 14.sp,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (_isCollaborative) _buildSessionIndicator(),
+            ],
           ),
-          
-          SizedBox(height: 16.h),
-          
-          // Mood selection option
-          ContextAwareCTA(
-            title: 'Choose Your Mood',
-            subtitle: 'Get personalized recommendations',
-            icon: Icons.mood,
-            onPressed: _showMoodSelection,
-          ),
-          
-          SizedBox(height: 16.h),
-          
-          // Session info if collaborative
-          if (_isCollaborative && _currentSession != null)
-            _buildSessionInfo(),
+          if (_isCollaborative && _currentSession != null) ...[
+            SizedBox(height: 16.h),
+            _buildParticipantsBar(),
+          ],
         ],
       ),
     );
   }
 
-  String _getStartTitle() {
+  String _getContextTitle() {
     switch (widget.context) {
+      case MatchingContext.solo:
+        return 'Discover Movies';
       case MatchingContext.friendInvite:
-        return 'Start Matching with Friend';
+        return 'Match with ${widget.targetFriend?.name ?? 'Friend'}';
       case MatchingContext.groupInvite:
-        return 'Start Group Matching';
+        return 'Group Matching';
       case MatchingContext.continueSession:
         return 'Continue Session';
-      default:
-        return 'Start Discovering';
+      case MatchingContext.joinSession:
+        return 'Join Session';
     }
   }
 
-  String _getStartSubtitle() {
-    switch (widget.context) {
-      case MatchingContext.friendInvite:
-        return 'Find movies you both will love';
-      case MatchingContext.groupInvite:
-        return 'Find movies for everyone';
-      case MatchingContext.continueSession:
-        return 'Pick up where you left off';
-      default:
-        return 'Discover your next favorite movie';
-    }
+  Widget _buildSessionIndicator() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.green.withValues(alpha: 0.2), // ✅ FIXED: withValues
+            Colors.green.withValues(alpha: 0.1), // ✅ FIXED: withValues
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(
+          color: Colors.green.withValues(alpha: 0.4), // ✅ FIXED: withValues
+          width: 1.w,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8.w,
+            height: 8.w,
+            decoration: const BoxDecoration(
+              color: Colors.green,
+              shape: BoxShape.circle,
+            ),
+          ),
+          SizedBox(width: 8.w),
+          Text(
+            'LIVE',
+            style: TextStyle(
+              color: Colors.green,
+              fontSize: 12.sp,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  Widget _buildSessionInfo() {
+  Widget _buildParticipantsBar() {
+    final participants = _currentSession?.participantNames ?? [];
+    
     return Container(
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
         color: const Color(0xFF2A2A2A),
         borderRadius: BorderRadius.circular(12.r),
         border: Border.all(
-          color: const Color(0xFFE5A00D).withOpacity(0.3),
+          color: const Color(0xFFE5A00D).withValues(alpha: 0.2), // ✅ FIXED: withValues
           width: 1.w,
         ),
       ),
@@ -770,102 +795,114 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Session Details',
+            'Session Participants',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 16.sp,
+              fontSize: 14.sp,
               fontWeight: FontWeight.w600,
             ),
           ),
           SizedBox(height: 8.h),
-          Text(
-            'Participants: ${_currentSession!.participantNames.join(", ")}',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 14.sp,
-            ),
-          ),
-          Text(
-            'Status: ${_currentSession!.status.name}',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 14.sp,
-            ),
+          Wrap(
+            spacing: 8.w,
+            children: participants.map((name) => Container(
+              padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+              decoration: BoxDecoration(
+                color: name == widget.userProfile.name 
+                    ? const Color(0xFFE5A00D).withValues(alpha: 0.2) // ✅ FIXED: withValues
+                    : Colors.grey.withValues(alpha: 0.2), // ✅ FIXED: withValues
+                borderRadius: BorderRadius.circular(12.r),
+              ),
+              child: Text(
+                name,
+                style: TextStyle(
+                  color: name == widget.userProfile.name 
+                      ? const Color(0xFFE5A00D)
+                      : Colors.white70,
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            )).toList(),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMatchingInterface() {
-    if (_sessionPool.isEmpty) {
-      return _buildNoMoviesState();
-    }
-    
+  Widget _buildSwipeInterface() {
     return Column(
       children: [
-        // Movie cards
         Expanded(
           child: Center(
-            child: _buildMovieCard(_sessionPool.first),
+            child: _buildCardStack(),
           ),
         ),
-        
-        // Action buttons
         _buildActionButtons(),
+        SizedBox(height: 20.h),
       ],
     );
   }
 
-  Widget _buildNoMoviesState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildCardStack() {
+    return SizedBox(
+      width: 320.w,
+      height: 500.h,
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          Icon(
-            Icons.movie_outlined,
-            size: 64.sp,
-            color: Colors.grey[600],
-          ),
-          SizedBox(height: 16.h),
-          Text(
-            'No more movies',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18.sp,
-              fontWeight: FontWeight.w600,
+          // Back card (next movie)
+          if (_sessionPool.length > 1)
+            Positioned(
+              child: Transform.scale(
+                scale: 0.95,
+                child: Opacity(
+                  opacity: 0.5,
+                  child: _buildMovieCard(_sessionPool[1], isBackCard: true),
+                ),
+              ),
             ),
-          ),
-          SizedBox(height: 8.h),
-          Text(
-            'Try adjusting your preferences or check back later',
-            style: TextStyle(
-              color: Colors.grey[400],
-              fontSize: 14.sp,
+          
+          // Front card (current movie)
+          AnimatedBuilder(
+            animation: _cardAnimationController,
+            builder: (context, child) => Transform.translate(
+              offset: _cardSlideAnimation.value,
+              child: Transform.scale(
+                scale: _cardScaleAnimation.value,
+                child: GestureDetector(
+                  onPanStart: _onPanStart,
+                  onPanUpdate: _onPanUpdate,
+                  onPanEnd: _onPanEnd,
+                  child: Transform.rotate(
+                    angle: _dragPosition * 0.1,
+                    child: _buildMovieCard(_sessionPool.first),
+                  ),
+                ),
+              ),
             ),
-            textAlign: TextAlign.center,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMovieCard(Movie movie) {
+  Widget _buildMovieCard(Movie movie, {bool isBackCard = false}) {
     return Container(
-      width: 300.w,
-      height: 450.h,
+      width: 320.w,
+      height: 500.h,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16.r),
-        boxShadow: [
+        borderRadius: BorderRadius.circular(20.r),
+        boxShadow: isBackCard ? [] : [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3), // ✅ FIXED: withValues
             blurRadius: 20.r,
             offset: Offset(0, 10.h),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(16.r),
+        borderRadius: BorderRadius.circular(20.r),
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -874,83 +911,134 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
                 ? Image.network(
                     movie.posterUrl,
                     fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => _buildMoviePlaceholder(),
+                    errorBuilder: (context, error, stackTrace) => _buildPlaceholderPoster(),
                   )
-                : _buildMoviePlaceholder(),
+                : _buildPlaceholderPoster(),
             
             // Gradient overlay
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.transparent,
-                    Colors.black.withOpacity(0.8),
-                  ],
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 200.h,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.8), // ✅ FIXED: withValues
+                    ],
+                  ),
                 ),
               ),
             ),
             
             // Movie info
             Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Padding(
-                padding: EdgeInsets.all(16.w),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      movie.title,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+              bottom: 20.h,
+              left: 20.w,
+              right: 20.w,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    movie.title,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24.sp,
+                      fontWeight: FontWeight.bold,
                     ),
-                    SizedBox(height: 8.h),
-                    if (movie.genres.isNotEmpty)
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  SizedBox(height: 8.h),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.star,
+                        color: const Color(0xFFE5A00D),
+                        size: 16.sp,
+                      ),
+                      SizedBox(width: 4.w),
                       Text(
-                        movie.genres.take(3).join(" • "),
+                        '${movie.rating}/10',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14.sp,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      SizedBox(width: 16.w),
+                      Text(
+                        movie.releaseYear.toString(), // ✅ FIXED: Convert int to String
                         style: TextStyle(
                           color: Colors.white70,
                           fontSize: 14.sp,
                         ),
                       ),
-                    if (movie.overview.isNotEmpty) ...[
-                      SizedBox(height: 8.h),
-                      Text(
-                        movie.overview,
-                        style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: 12.sp,
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
                     ],
+                  ),
+                  if (movie.overview.isNotEmpty) ...[
+                    SizedBox(height: 12.h),
+                    Text(
+                      movie.overview,
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 13.sp,
+                        height: 1.4,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
+            
+            // Swipe indication overlay
+            if (_isDragging && !isBackCard)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20.r),
+                    color: _dragPosition > 50 
+                        ? Colors.green.withValues(alpha: 0.3) // ✅ FIXED: withValues
+                        : _dragPosition < -50
+                            ? Colors.red.withValues(alpha: 0.3) // ✅ FIXED: withValues
+                            : Colors.transparent,
+                  ),
+                  child: Center(
+                    child: _dragPosition > 50
+                        ? Icon(
+                            Icons.favorite,
+                            color: Colors.green,
+                            size: 80.sp,
+                          )
+                        : _dragPosition < -50
+                            ? Icon(
+                                Icons.close,
+                                color: Colors.red,
+                                size: 80.sp,
+                              )
+                            : null,
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMoviePlaceholder() {
+  Widget _buildPlaceholderPoster() {
     return Container(
       color: const Color(0xFF2A2A2A),
       child: Center(
         child: Icon(
           Icons.movie,
-          size: 64.sp,
+          size: 80.sp,
           color: Colors.grey[600],
         ),
       ),
@@ -958,51 +1046,69 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
   }
 
   Widget _buildActionButtons() {
-    return Container(
-      padding: EdgeInsets.all(20.w),
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 40.w),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           // Pass button
-          GestureDetector(
-            onTap: () => _passMovie(_sessionPool.first),
-            child: Container(
-              width: 64.w,
-              height: 64.w,
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(32.r),
-                border: Border.all(
-                  color: Colors.red,
-                  width: 2.w,
+          AnimatedBuilder(
+            animation: _buttonAnimationController,
+            builder: (context, child) => GestureDetector(
+              onTapDown: (_) => _buttonAnimationController.forward(),
+              onTapUp: (_) => _buttonAnimationController.reverse(),
+              onTapCancel: () => _buttonAnimationController.reverse(),
+              onTap: () => _passMovie(_sessionPool.first),
+              child: Transform.scale(
+                scale: 1.0 - (_buttonAnimationController.value * 0.1),
+                child: Container(
+                  width: 60.w,
+                  height: 60.w,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1), // ✅ FIXED: withValues
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.red,
+                      width: 2.w,
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.close,
+                    color: Colors.red,
+                    size: 28.sp,
+                  ),
                 ),
-              ),
-              child: Icon(
-                Icons.close,
-                color: Colors.red,
-                size: 32.sp,
               ),
             ),
           ),
           
           // Like button
-          GestureDetector(
-            onTap: () => _likeMovie(_sessionPool.first),
-            child: Container(
-              width: 64.w,
-              height: 64.w,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE5A00D).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(32.r),
-                border: Border.all(
-                  color: const Color(0xFFE5A00D),
-                  width: 2.w,
+          AnimatedBuilder(
+            animation: _buttonAnimationController,
+            builder: (context, child) => GestureDetector(
+              onTapDown: (_) => _buttonAnimationController.forward(),
+              onTapUp: (_) => _buttonAnimationController.reverse(),
+              onTapCancel: () => _buttonAnimationController.reverse(),
+              onTap: () => _likeMovie(_sessionPool.first),
+              child: Transform.scale(
+                scale: 1.0 - (_buttonAnimationController.value * 0.1),
+                child: Container(
+                  width: 60.w,
+                  height: 60.w,
+                  decoration: BoxDecoration(
+                    color: Colors.green.withValues(alpha: 0.1), // ✅ FIXED: withValues
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.green,
+                      width: 2.w,
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.favorite,
+                    color: Colors.green,
+                    size: 28.sp,
+                  ),
                 ),
-              ),
-              child: Icon(
-                Icons.favorite,
-                color: const Color(0xFFE5A00D),
-                size: 32.sp,
               ),
             ),
           ),
@@ -1011,85 +1117,100 @@ class _MatcherScreenV2State extends State<MatcherScreenV2>
     );
   }
 
-  void _showMoodSelection() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.90,
-        decoration: BoxDecoration(
-          color: const Color(0xFF121212),
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(20.r),
-            topRight: Radius.circular(20.r),
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 100.w,
+            height: 100.w,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF2A2A2A),
+              border: Border.all(
+                color: Colors.grey[800]!,
+                width: 2.w,
+              ),
+            ),
+            child: Icon(
+              Icons.movie_creation_outlined,
+              size: 48.sp,
+              color: Colors.grey[600],
+            ),
           ),
-        ),
-        child: MoodSelectionWidget(
-          onMoodsSelected: (moods) {
-            Navigator.pop(context);
-            setState(() {
-              _selectedMoods = moods;
-            });
-            _generateMoodBasedMovies();
-          },
-          isGroupMode: _isCollaborative,
-          groupSize: _isCollaborative ? 2 : 1,
-          moodContext: _isCollaborative 
-              ? MoodSelectionContext.friendInvite 
-              : MoodSelectionContext.solo,
-        ),
+          SizedBox(height: 24.h),
+          Text(
+            'No More Movies',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20.sp,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: 12.h),
+          Text(
+            'You\'ve seen all available movies.\nTry changing your preferences.',
+            style: TextStyle(
+              color: Colors.grey[400],
+              fontSize: 14.sp,
+              height: 1.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 32.h),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE5A00D),
+              foregroundColor: Colors.black,
+              padding: EdgeInsets.symmetric(horizontal: 32.w, vertical: 16.h),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(25.r),
+              ),
+            ),
+            child: Text(
+              'Back to Matching',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Future<void> _generateMoodBasedMovies() async {
-    if (_selectedMoods.isEmpty) return;
+  // ========================================
+  // GESTURE HANDLING
+  // ========================================
+
+  void _onPanStart(DragStartDetails details) {
+    setState(() {
+      _isDragging = true;
+    });
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragPosition += details.delta.dx;
+    });
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    if (_dragPosition.abs() > 100) {
+      // Trigger swipe action
+      if (_dragPosition > 0) {
+        _likeMovie(_sessionPool.first);
+      } else {
+        _passMovie(_sessionPool.first);
+      }
+    }
     
     setState(() {
-      _isLoading = true;
-      _statusMessage = 'Generating personalized recommendations...';
+      _isDragging = false;
+      _dragPosition = 0.0;
     });
-    
-    try {
-      // Create session context
-      _sessionContext = SessionContext(
-        moods: _selectedMoods.first,
-        groupMemberIds: _isCollaborative 
-            ? [widget.userProfile.uid] 
-            : [],
-      );
-      
-      // Generate mood-based movies
-      final seenMovieIds = <String>{
-        ...widget.userProfile.likedMovieIds,
-        ...widget.userProfile.passedMovieIds,
-      };
-      
-      final moodMovies = await MoodBasedLearningEngine.generateMoodBasedSession(
-        user: widget.userProfile,
-        movieDatabase: _movieDatabase,
-        sessionContext: _sessionContext!,
-        seenMovieIds: seenMovieIds,
-        sessionPassedMovieIds: _sessionPassedMovieIds,
-        sessionSize: 30,
-      );
-      
-      setState(() {
-        _sessionPool = moodMovies;
-        _isMatching = true;
-        _statusMessage = '';
-      });
-      
-    } catch (e) {
-      DebugLogger.log("❌ Error generating mood-based movies: $e");
-      setState(() {
-        _statusMessage = 'Failed to generate recommendations. Please try again.';
-      });
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
   }
 }

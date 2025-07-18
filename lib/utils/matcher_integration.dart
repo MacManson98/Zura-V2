@@ -1,8 +1,6 @@
 // lib/utils/matcher_integration.dart
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
-import '../models/friend_group.dart';
-import '../utils/completed_session.dart';
 import '../utils/unified_session_manager.dart';
 import '../screens/matcher_screen.dart';
 import '../utils/debug_loader.dart';
@@ -33,7 +31,7 @@ class MatcherIntegration {
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (context) => MatcherScreenV2(
+        builder: (context) => MatcherScreen(
           userProfile: userProfile,
           context: matchingContext,
           sessionId: sessionId,
