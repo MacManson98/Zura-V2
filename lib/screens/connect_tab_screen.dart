@@ -12,7 +12,7 @@ import '../utils/debug_loader.dart';
 import '../widgets/inline_notification_card.dart';
 import '../widgets/context_aware_cta.dart';
 import '../screens/friend_search_screen.dart';
-import 'matcher_screen.dart';
+import '../utils/matcher_integration.dart';
 
 class ConnectTabScreen extends StatefulWidget {
   final UserProfile userProfile;

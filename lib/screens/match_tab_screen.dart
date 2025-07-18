@@ -1,4 +1,4 @@
-// lib/screens/match_tab_screen.dart
+// lib/screens/match_tab_screen.dart - UPDATED VERSION
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -12,8 +12,8 @@ import '../utils/unified_session_manager.dart';
 import '../utils/debug_loader.dart';
 import '../widgets/context_aware_cta.dart';
 import '../widgets/inline_notification_card.dart';
-import '../screens/matcher_screen.dart';
-import '../screens/mood_selection_screen.dart';
+import '../widgets/enhanced_context_cta.dart';
+import '../utils/matcher_integration.dart';
 
 class MatchTabScreen extends StatefulWidget {
   final UserProfile userProfile;
@@ -45,7 +45,6 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
 
   Future<void> _loadUserContext() async {
     try {
-      // Load friends and groups in parallel
       final results = await Future.wait([
         FriendshipService.getFriends(widget.userProfile.uid),
         GroupService().getUserGroups(widget.userProfile.uid),
@@ -88,23 +87,11 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
       return 'You have ${_sessionInvites.length} pending session invite${_sessionInvites.length == 1 ? '' : 's'}';
     }
     
-    if (_friends.isEmpty && _groups.isEmpty) {
-      return 'Start by discovering movies solo or add friends to match together';
-    }
-    
-    if (_friends.isNotEmpty && _groups.isNotEmpty) {
-      return 'Match with ${_friends.length} friend${_friends.length == 1 ? '' : 's'} or ${_groups.length} group${_groups.length == 1 ? '' : 's'}';
-    }
-    
     if (_friends.isNotEmpty) {
-      return 'Match with your ${_friends.length} friend${_friends.length == 1 ? '' : 's'}';
+      return 'Start matching with friends or discover solo';
     }
     
-    if (_groups.isNotEmpty) {
-      return 'Match with your ${_groups.length} group${_groups.length == 1 ? '' : 's'}';
-    }
-    
-    return 'Discover your next favorite movie';
+    return 'Ready to discover movies!';
   }
 
   @override
@@ -114,7 +101,9 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       body: SafeArea(
-        child: _isLoading ? _buildLoadingState() : _buildMainContent(),
+        child: _isLoading 
+            ? _buildLoadingState()
+            : _buildMainContent(),
       ),
     );
   }
@@ -125,16 +114,14 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(
-              const Color(0xFFE5A00D),
-            ),
+            valueColor: AlwaysStoppedAnimation<Color>(const Color(0xFFE5A00D)),
           ),
           SizedBox(height: 16.h),
           Text(
-            'Loading your movie world...',
+            'Loading your movie matching experience...',
             style: TextStyle(
-              color: Colors.grey[400],
-              fontSize: 14.sp,
+              color: Colors.white70,
+              fontSize: 16.sp,
             ),
           ),
         ],
@@ -143,72 +130,63 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
   }
 
   Widget _buildMainContent() {
-    return RefreshIndicator(
-      onRefresh: _loadUserContext,
-      color: const Color(0xFFE5A00D),
-      backgroundColor: const Color(0xFF2A2A2A),
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.all(20.w),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(),
-            SizedBox(height: 24.h),
-            if (_sessionInvites.isNotEmpty) ...[
-              _buildSessionInvites(),
-              SizedBox(height: 24.h),
-            ],
-            _buildPrimaryActions(),
-            SizedBox(height: 32.h),
-            _buildQuickActions(),
-            SizedBox(height: 32.h),
-            _buildRecentActivity(),
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(20.w),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Context message
+          if (_contextMessage.isNotEmpty) ...[
+            Text(
+              _contextMessage,
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            SizedBox(height: 20.h),
           ],
-        ),
+          
+          // Pending invitations
+          if (_sessionInvites.isNotEmpty) ...[
+            _buildPendingInvitations(),
+            SizedBox(height: 20.h),
+          ],
+          
+          // Primary action
+          _buildPrimaryAction(),
+          SizedBox(height: 16.h),
+          
+          // Quick actions
+          _buildQuickActions(),
+          SizedBox(height: 24.h),
+          
+          // Friends section
+          if (_friends.isNotEmpty) ...[
+            _buildFriendsSection(),
+            SizedBox(height: 24.h),
+          ],
+          
+          // Groups section
+          if (_groups.isNotEmpty) ...[
+            _buildGroupsSection(),
+            SizedBox(height: 24.h),
+          ],
+          
+          // Recent activity
+          _buildRecentActivity(),
+        ],
       ),
     );
   }
 
-  Widget _buildHeader() {
-    final greeting = _getGreeting();
-    
+  Widget _buildPendingInvitations() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '$greeting, ${widget.userProfile.name}',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 24.sp,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        SizedBox(height: 8.h),
-        Text(
-          _contextMessage,
-          style: TextStyle(
-            color: Colors.grey[400],
-            fontSize: 14.sp,
-          ),
-        ),
-      ],
-    );
-  }
-
-  String _getGreeting() {
-    final hour = DateTime.now().hour;
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
-  }
-
-  Widget _buildSessionInvites() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Pending Invitations',
+          'Session Invitations',
           style: TextStyle(
             color: Colors.white,
             fontSize: 18.sp,
@@ -216,180 +194,39 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
           ),
         ),
         SizedBox(height: 12.h),
-        ...(_sessionInvites.take(2).map((invite) => 
-          InlineNotificationCard(
-            title: '${invite['fromUserName']} invited you to match',
-            subtitle: invite['hasMood'] == true 
-                ? 'Mood: ${invite['selectedMoodName']} ${invite['selectedMoodEmoji']}'
-                : 'Choose movies together',
-            type: InlineNotificationType.sessionInvite,
-            onAccept: () => _acceptSessionInvite(invite),
-            onDecline: () => _declineSessionInvite(invite),
-          ),
-        )).toList(),
-        if (_sessionInvites.length > 2) ...[
-          SizedBox(height: 8.h),
-          Text(
-            '+${_sessionInvites.length - 2} more invitations',
-            style: TextStyle(
-              color: Colors.grey[400],
-              fontSize: 12.sp,
+        ...(_sessionInvites.take(3).map((invite) => Padding(
+          padding: EdgeInsets.only(bottom: 8.h),
+          child: InlineNotificationCard(
+            type: InlineNotificationType.success,
+            title: '${invite['hostName']} invited you to match',
+            message: 'Tap to join their session',
+            action: InlineNotificationAction(
+              label: 'Join',
+              onPressed: () => _acceptSessionInvite(invite),
+            ),
+            secondaryAction: InlineNotificationAction(
+              label: 'Decline',
+              onPressed: () => _declineSessionInvite(invite),
             ),
           ),
-        ],
+        )).toList()),
       ],
     );
   }
 
-  Widget _buildPrimaryActions() {
+  Widget _buildPrimaryAction() {
     final activeSession = UnifiedSessionManager.getActiveSessionForDisplay();
     
     if (activeSession != null) {
-      return _buildActiveSessionCard(activeSession);
+      // Continue active session
+      return ContinueSessionCTAWidget(userProfile: widget.userProfile);
+    } else {
+      // Start new matching
+      return MatcherCTAWidget(
+        userProfile: widget.userProfile,
+        contextMessage: _contextMessage,
+      );
     }
-    
-    return Column(
-      children: [
-        ContextAwareCTA(
-          title: 'Start Matching',
-          subtitle: _getPrimaryActionSubtitle(),
-          icon: Icons.play_arrow,
-          onPressed: _handlePrimaryAction,
-          isPrimary: true,
-        ),
-        SizedBox(height: 16.h),
-        ContextAwareCTA(
-          title: 'Solo Discovery',
-          subtitle: 'Discover movies at your own pace',
-          icon: Icons.explore,
-          onPressed: _startSoloMatching,
-          isPrimary: false,
-        ),
-      ],
-    );
-  }
-
-  String _getPrimaryActionSubtitle() {
-    if (_friends.isEmpty && _groups.isEmpty) {
-      return 'Start with solo discovery or add friends';
-    }
-    
-    if (_friends.isNotEmpty && _groups.isNotEmpty) {
-      return 'Choose friends or groups to match with';
-    }
-    
-    if (_friends.isNotEmpty) {
-      return 'Match with ${_friends.length} friend${_friends.length == 1 ? '' : 's'}';
-    }
-    
-    if (_groups.isNotEmpty) {
-      return 'Match with ${_groups.length} group${_groups.length == 1 ? '' : 's'}';
-    }
-    
-    return 'Start collaborative matching';
-  }
-
-  Widget _buildActiveSessionCard(activeSession) {
-    final isCollaborative = activeSession.type != SessionType.solo;
-    
-    return Container(
-      padding: EdgeInsets.all(20.w),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFFE5A00D).withOpacity(0.1),
-            const Color(0xFFE5A00D).withOpacity(0.05),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(
-          color: const Color(0xFFE5A00D).withOpacity(0.3),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                isCollaborative ? Icons.people : Icons.person,
-                color: const Color(0xFFE5A00D),
-                size: 24.sp,
-              ),
-              SizedBox(width: 12.w),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Active Session',
-                      style: TextStyle(
-                        color: const Color(0xFFE5A00D),
-                        fontSize: 16.sp,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text(
-                      activeSession.displayTitle,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14.sp,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 16.h),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _continueActiveSession,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE5A00D),
-                    foregroundColor: Colors.black,
-                    padding: EdgeInsets.symmetric(vertical: 12.h),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12.r),
-                    ),
-                  ),
-                  child: Text(
-                    'Continue Matching',
-                    style: TextStyle(
-                      fontSize: 14.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(width: 12.w),
-              OutlinedButton(
-                onPressed: _endActiveSession,
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: Colors.grey[600]!),
-                  padding: EdgeInsets.symmetric(vertical: 12.h, horizontal: 16.w),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12.r),
-                  ),
-                ),
-                child: Text(
-                  'End',
-                  style: TextStyle(
-                    color: Colors.grey[400],
-                    fontSize: 14.sp,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildQuickActions() {
@@ -400,7 +237,7 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
           'Quick Actions',
           style: TextStyle(
             color: Colors.white,
-            fontSize: 18.sp,
+            fontSize: 16.sp,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -408,20 +245,20 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
         Row(
           children: [
             Expanded(
-              child: _buildQuickActionCard(
-                icon: Icons.mood,
+              child: ContextAwareCTA(
                 title: 'Mood Match',
-                subtitle: 'Based on how you feel',
+                subtitle: 'Choose your vibe',
+                icon: Icons.mood,
                 onPressed: _startMoodMatching,
               ),
             ),
             SizedBox(width: 12.w),
             Expanded(
-              child: _buildQuickActionCard(
+              child: ContextAwareCTA(
+                title: 'Popular',
+                subtitle: 'Trending now',
                 icon: Icons.trending_up,
-                title: 'Trending',
-                subtitle: 'What\'s popular now',
-                onPressed: _viewTrending,
+                onPressed: _startPopularMatching,
               ),
             ),
           ],
@@ -430,16 +267,60 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
     );
   }
 
-  Widget _buildQuickActionCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onPressed,
-  }) {
+  Widget _buildFriendsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Friends',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18.sp,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            TextButton(
+              onPressed: _viewAllFriends,
+              child: Text(
+                'View All',
+                style: TextStyle(
+                  color: const Color(0xFFE5A00D),
+                  fontSize: 14.sp,
+                ),
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 12.h),
+        SizedBox(
+          height: 120.h,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _friends.take(5).length,
+            separatorBuilder: (context, index) => SizedBox(width: 12.w),
+            itemBuilder: (context, index) {
+              final friend = _friends[index];
+              return _buildFriendCard(friend);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFriendCard(UserProfile friend) {
     return GestureDetector(
-      onTap: onPressed,
+      onTap: () => MatcherIntegration.startFriendMatching(
+        context: context,
+        userProfile: widget.userProfile,
+        friend: friend,
+      ),
       child: Container(
-        padding: EdgeInsets.all(16.w),
+        width: 100.w,
+        padding: EdgeInsets.all(12.w),
         decoration: BoxDecoration(
           color: const Color(0xFF2A2A2A),
           borderRadius: BorderRadius.circular(12.r),
@@ -449,27 +330,35 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
           ),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              icon,
-              color: const Color(0xFFE5A00D),
-              size: 24.sp,
+            CircleAvatar(
+              radius: 24.r,
+              backgroundColor: const Color(0xFFE5A00D),
+              child: Text(
+                friend.name.isNotEmpty ? friend.name[0].toUpperCase() : 'F',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
             SizedBox(height: 8.h),
             Text(
-              title,
+              friend.name,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 14.sp,
-                fontWeight: FontWeight.w600,
+                fontSize: 12.sp,
+                fontWeight: FontWeight.w500,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
             Text(
-              subtitle,
+              'Tap to match',
               style: TextStyle(
                 color: Colors.grey[400],
-                fontSize: 12.sp,
+                fontSize: 10.sp,
               ),
             ),
           ],
@@ -478,8 +367,47 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
     );
   }
 
+  Widget _buildGroupsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Groups',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18.sp,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            TextButton(
+              onPressed: _viewAllGroups,
+              child: Text(
+                'View All',
+                style: TextStyle(
+                  color: const Color(0xFFE5A00D),
+                  fontSize: 14.sp,
+                ),
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 12.h),
+        ..._groups.take(3).map((group) => Padding(
+          padding: EdgeInsets.only(bottom: 12.h),
+          child: GroupMatchCTAWidget(
+            userProfile: widget.userProfile,
+            group: [], // You'll need to load group members
+            groupName: group.name,
+          ),
+        )).toList(),
+      ],
+    );
+  }
+
   Widget _buildRecentActivity() {
-    // This would show recent matches, sessions, etc.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -493,10 +421,15 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
         ),
         SizedBox(height: 12.h),
         Container(
+          width: double.infinity,
           padding: EdgeInsets.all(20.w),
           decoration: BoxDecoration(
             color: const Color(0xFF2A2A2A),
             borderRadius: BorderRadius.circular(12.r),
+            border: Border.all(
+              color: Colors.grey[800]!,
+              width: 1,
+            ),
           ),
           child: Column(
             children: [
@@ -505,7 +438,7 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
                 color: Colors.grey[600],
                 size: 32.sp,
               ),
-              SizedBox(height: 8.h),
+              SizedBox(height: 12.h),
               Text(
                 'No recent activity',
                 style: TextStyle(
@@ -515,7 +448,7 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
               ),
               SizedBox(height: 4.h),
               Text(
-                'Start matching to see your activity here',
+                'Start matching to see your activity',
                 style: TextStyle(
                   color: Colors.grey[500],
                   fontSize: 12.sp,
@@ -528,241 +461,54 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
     );
   }
 
-  // Action handlers
-  void _handlePrimaryAction() {
-    if (_friends.isEmpty && _groups.isEmpty) {
-      _startSoloMatching();
-    } else {
-      _showCollaborativeOptions();
-    }
-  }
-
-  void _startSoloMatching() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => MatcherScreen(
-          userProfile: widget.userProfile,
-          sessionType: SessionType.solo,
-        ),
-      ),
-    );
-  }
-
-  void _showCollaborativeOptions() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF2A2A2A),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20.r)),
-      ),
-      builder: (context) => _buildCollaborativeOptionsSheet(),
-    );
-  }
-
-  Widget _buildCollaborativeOptionsSheet() {
-    return Container(
-      padding: EdgeInsets.all(20.w),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Match with Others',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18.sp,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          SizedBox(height: 20.h),
-          if (_friends.isNotEmpty) ...[
-            _buildCollaborativeOption(
-              icon: Icons.person,
-              title: 'Friends',
-              subtitle: '${_friends.length} friend${_friends.length == 1 ? '' : 's'} available',
-              onPressed: _showFriendSelection,
-            ),
-            SizedBox(height: 12.h),
-          ],
-          if (_groups.isNotEmpty) ...[
-            _buildCollaborativeOption(
-              icon: Icons.group,
-              title: 'Groups',
-              subtitle: '${_groups.length} group${_groups.length == 1 ? '' : 's'} available',
-              onPressed: _showGroupSelection,
-            ),
-            SizedBox(height: 12.h),
-          ],
-          _buildCollaborativeOption(
-            icon: Icons.qr_code,
-            title: 'Session Code',
-            subtitle: 'Join someone else\'s session',
-            onPressed: _showCodeInput,
-          ),
-          SizedBox(height: 20.h),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCollaborativeOption({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onPressed,
-  }) {
-    return ListTile(
-      leading: Icon(icon, color: const Color(0xFFE5A00D)),
-      title: Text(
-        title,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 16.sp,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(
-          color: Colors.grey[400],
-          fontSize: 14.sp,
-        ),
-      ),
-      onTap: onPressed,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12.r),
-      ),
-      tileColor: const Color(0xFF1E1E1E),
-    );
-  }
-
+  // Action methods
   void _startMoodMatching() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => MoodSelectionScreen(
-          userProfile: widget.userProfile,
-        ),
-      ),
-    );
-  }
-
-  void _viewTrending() {
-    // Navigate to trending screen
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Trending movies coming soon!'),
-        backgroundColor: const Color(0xFFE5A00D),
-      ),
-    );
-  }
-
-  void _showFriendSelection() {
-    Navigator.pop(context);
-    // Navigate to friend selection
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Friend selection coming soon!'),
-        backgroundColor: const Color(0xFFE5A00D),
-      ),
-    );
-  }
-
-  void _showGroupSelection() {
-    Navigator.pop(context);
-    // Navigate to group selection
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Group selection coming soon!'),
-        backgroundColor: const Color(0xFFE5A00D),
-      ),
-    );
-  }
-
-  void _showCodeInput() {
-    Navigator.pop(context);
-    // Show code input dialog
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Session code input coming soon!'),
-        backgroundColor: const Color(0xFFE5A00D),
-      ),
-    );
-  }
-
-  void _continueActiveSession() {
-    final activeSession = UnifiedSessionManager.getActiveSessionForDisplay();
-    if (activeSession != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => MatcherScreen(
-            userProfile: widget.userProfile,
-            sessionType: activeSession.type,
-          ),
-        ),
-      );
-    }
-  }
-
-  void _endActiveSession() {
-    // Show confirmation dialog
-    showDialog(
+    // This will be handled by the new MatcherScreenV2
+    MatcherIntegration.startSoloMatching(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        title: Text('End Session?', style: TextStyle(color: Colors.white)),
-        content: Text(
-          'Are you sure you want to end your current session?',
-          style: TextStyle(color: Colors.grey[400]),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: Colors.grey[400])),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // End the session
-              UnifiedSessionManager.clearActiveCollaborativeSession();
-              setState(() {
-                _contextMessage = _generateContextMessage();
-              });
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFE5A00D),
-              foregroundColor: Colors.black,
-            ),
-            child: Text('End Session'),
-          ),
-        ],
+      userProfile: widget.userProfile,
+    );
+  }
+
+  void _startPopularMatching() {
+    // This will be handled by the new MatcherScreenV2
+    MatcherIntegration.startSoloMatching(
+      context: context,
+      userProfile: widget.userProfile,
+    );
+  }
+
+  void _viewAllFriends() {
+    // Navigate to friends screen
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Friends list integration coming soon!'),
+        backgroundColor: const Color(0xFFE5A00D),
+      ),
+    );
+  }
+
+  void _viewAllGroups() {
+    // Navigate to groups screen
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Groups list integration coming soon!'),
+        backgroundColor: const Color(0xFFE5A00D),
       ),
     );
   }
 
   Future<void> _acceptSessionInvite(Map<String, dynamic> invite) async {
     try {
-      final sessionId = invite['sessionId'];
-      final session = await SessionService.acceptInvitation(sessionId, widget.userProfile.name);
+      await MatcherIntegration.joinSession(
+        context: context,
+        userProfile: widget.userProfile,
+        sessionId: invite['sessionId'],
+      );
       
-      if (session != null) {
-        UnifiedSessionManager.setActiveCollaborativeSession(session);
-        await _loadUserContext(); // Refresh the UI
-        
-        // Navigate to matcher screen
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MatcherScreen(
-              userProfile: widget.userProfile,
-              sessionType: SessionType.friend,
-              collaborativeSession: session,
-            ),
-          ),
-        );
-      }
+      // Refresh the UI
+      await _loadUserContext();
+      
     } catch (e) {
       DebugLogger.log("❌ Error accepting session invite: $e");
       ScaffoldMessenger.of(context).showSnackBar(
@@ -780,7 +526,7 @@ class _MatchTabScreenState extends State<MatchTabScreen> with AutomaticKeepAlive
       final sessionId = invite['sessionId'];
       
       await SessionService.declineInvitation(inviteId, sessionId);
-      await _loadUserContext(); // Refresh the UI
+      await _loadUserContext();
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
